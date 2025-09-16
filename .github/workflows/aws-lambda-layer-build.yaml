@@ -1,0 +1,192 @@
+# Primarily used in the https://github.com/Sumo-Logic-IAA/aws-lambda-layers repository
+name: Build and Deploy Lambda Layer
+
+on:
+  workflow_call:
+    inputs:
+      package_name:
+        required: true
+        type: string
+      working_directory:
+        description: "The working directory where the package/requirements.txt is located"
+        required: true
+        type: string
+      python_versions:
+        required: false
+        type: string
+        default: '["3.12"]'
+      python_architectures:
+        required: false
+        type: string
+        default: '["arm64"]'
+      aws_regions:
+        required: false
+        type: string
+        default: '["us-east-1"]'
+      dryrun:
+        description: "Dryrun mode for testing locally with ACT"
+        required: false
+        type: string
+        default: "false"
+    secrets:
+      iam_role_arn:
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  PACKAGE_NAME: ${{ inputs.package_name }}
+  PYTHON_VERSIONS: ${{ inputs.python_versions }}
+  PYTHON_ARCHITECTURES: ${{ inputs.python_architectures }}
+  AWS_REGIONS: ${{ inputs.aws_regions }}
+  IAM_ROLE_ARN: ${{ secrets.iam_role_arn }}
+  DRYRUN: ${{ inputs.dryrun }}
+  WORKING_DIRECTORY: ${{ inputs.working_directory }}
+
+jobs:
+  define-matrix:
+    runs-on: ubuntu-latest-arm64
+    outputs:
+      versions: ${{ steps.versions.outputs.versions }}
+      architectures: ${{ steps.architectures.outputs.architectures }}
+      aws_regions: ${{ steps.aws_regions.outputs.aws_regions }}
+    steps:
+      # Define Python Versions
+      - name: Define Python Versions
+        id: versions
+        run: |
+          echo "versions=$(echo '${{ env.PYTHON_VERSIONS }}' | jq -c '.')" >> "$GITHUB_OUTPUT"
+
+      # Define Python Architectures
+      - name: Define Python Architectures
+        id: architectures
+        run: |
+          echo "architectures=$(echo '${{ env.PYTHON_ARCHITECTURES }}' | jq -c '.')" >> "$GITHUB_OUTPUT"
+
+      # Define AWS Regions
+      - name: Define AWS Regions
+        id: aws_regions
+        run: |
+          echo "aws_regions=$(echo '${{ env.AWS_REGIONS }}' | jq -c '.')" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: define-matrix
+    strategy:
+      matrix:
+        version: ${{ fromJSON(needs.define-matrix.outputs.versions) }}
+        arch: ${{ fromJSON(needs.define-matrix.outputs.architectures) }}
+    runs-on: ubuntu-latest-arm64
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+    name: Building Lambda Layer for Python ${{ matrix.version }} on ${{ matrix.arch }}
+    steps:
+      # Checkout source code
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            ${{ env.WORKING_DIRECTORY }}
+
+      # Set up Python environment
+      - name: Set up Python ${{ matrix.version }} for ${{ matrix.arch }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.version }}
+          architecture: ${{ matrix.arch }}
+
+      # Install Dependencies
+      - name: Install Dependencies
+        run: |
+          mkdir -p python
+          find . -type f -name "*.py" -exec sh -c 'cp -R "$(dirname "{}")" python/' \;
+          pip install --no-cache-dir --no-compile -r requirements.txt -t python
+
+      # Remove unnecessary files
+          find python -name "__pycache__" -type d -exec rm -r {} +
+          find python -name "*.pyc" -delete
+          find python -name "*.pyo" -delete
+          find python -name "*.dist-info" -type d -exec rm -r {} +
+          find python -name "*.egg-info" -type d -exec rm -r {} +
+          find python -name "tests" -type d -exec rm -r {} +
+          find python -name "test" -type d -exec rm -r {} +
+          find python -name "docs" -type d -exec rm -r {} +
+          find python -name "documentation" -type d -exec rm -r {} +
+          find python -name "*.txt" -delete
+          find python -name "*.md" -delete
+          find python -name "*.rst" -delete
+
+      # Zip Lambda Layer
+      - name: Zip Lambda Layer
+        run: |
+          zip -r lambda-layer-${{ matrix.version }}-${{ matrix.arch }}.zip python
+
+      # Upload Lambda Layer Artifact
+      - name: Upload Lambda Layer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-layer-${{ matrix.version }}-${{ matrix.arch }}
+          path: ${{ env.WORKING_DIRECTORY }}/lambda-layer-${{ matrix.version }}-${{ matrix.arch }}.zip
+          if-no-files-found: error
+
+  deploy:
+    needs:
+      - define-matrix
+      - build
+    strategy:
+      matrix:
+        version: ${{ fromJson(needs.define-matrix.outputs.versions) }}
+        arch: ${{ fromJson(needs.define-matrix.outputs.architectures) }}
+        aws_region: ${{ fromJson(needs.define-matrix.outputs.aws_regions) }}
+    runs-on: ubuntu-latest-arm64
+    name: Deploying Lambda Layer for Python ${{ matrix.version }} on ${{ matrix.arch }}
+    steps:
+      # Strip Dot from Version
+      - name: Strip Dot from Version
+        id: strip-dot
+        run: |
+          version_no_dots=$(echo ${{ matrix.version }} | tr -d '.')
+          echo "version_no_dot=$version_no_dots" >> "$GITHUB_OUTPUT"
+
+      # Generate Lambda Layer Name
+      - name: Generate Lambda Layer Name
+        id: generate-layer-name
+        run: |
+          VERSION=$(echo ${{ matrix.version }} | tr -d '.')
+          ARCH=$(echo ${{ matrix.arch }})
+          PACKAGE_NAME=$(echo ${{ env.PACKAGE_NAME }})
+          echo "layer-name=sumologic-iaa-p${VERSION}-${ARCH}-${PACKAGE_NAME}" >> "$GITHUB_OUTPUT"
+
+      # Download Lambda Layer Artifact
+      - name: Download Lambda Layer Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lambda-layer-${{ matrix.version }}-${{ matrix.arch }}
+
+      # Configure AWS credentials
+      - name: Configure AWS credentials
+        if: ${{ env.DRYRUN != 'true' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.IAM_ROLE_ARN }}
+          aws-region: ${{ matrix.aws_region }}
+
+      # Publish Lambda Layer
+      - name: Publish Lambda Layer
+        if: ${{ env.DRYRUN != 'true' }}
+        run: |
+          aws lambda publish-layer-version \
+            --layer-name ${{ steps.generate-layer-name.outputs.layer-name }} \
+            --description "Sumo Logic IAA managed lambda layer for the python package ${{ env.PACKAGE_NAME }}" \
+            --zip-file fileb://lambda-layer-${{ matrix.version }}-${{ matrix.arch }}.zip \
+            --compatible-runtimes python${{ matrix.version }} \
+            --compatible-architectures ${{ matrix.arch }} \
+            --region ${{ matrix.aws_region }}
+
+      # Publish Lambda Layer --- DRYRUN
+      - name: Publish Lambda Layer --- DRYRUN
+        if: ${{ env.DRYRUN == 'true' }}
+        run: |
+          echo "Dryrun: Publishing Lambda Layer for Python ${{ matrix.version }} on ${{ matrix.arch }} in ${{ matrix.aws_region }}"
