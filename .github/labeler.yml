@@ -1,0 +1,31 @@
+# Path-based labels applied by actions/labeler (v5 syntax).
+compute:
+  - changed-files:
+      - any-glob-to-any-file: "compute/**"
+networking:
+  - changed-files:
+      - any-glob-to-any-file: "networking/**"
+storage:
+  - changed-files:
+      - any-glob-to-any-file: "storage/**"
+databases:
+  - changed-files:
+      - any-glob-to-any-file: "databases/**"
+security:
+  - changed-files:
+      - any-glob-to-any-file: "security/**"
+automation-iac:
+  - changed-files:
+      - any-glob-to-any-file: "automation-iac/**"
+data-analytics:
+  - changed-files:
+      - any-glob-to-any-file: "data-analytics/**"
+operations-scenarios:
+  - changed-files:
+      - any-glob-to-any-file: "operations-scenarios/**"
+documentation:
+  - changed-files:
+      - any-glob-to-any-file: ["README.md", "CONTRIBUTING.md", "templates/**"]
+ci:
+  - changed-files:
+      - any-glob-to-any-file: ".github/**"

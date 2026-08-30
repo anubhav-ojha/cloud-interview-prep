@@ -1,0 +1,37 @@
+name: "🔧 Correction / improvement"
+description: Report an inaccuracy or suggest an improvement to an existing answer.
+title: "[Correction]: <short summary>"
+labels: ["correction"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Found something wrong or outdated? Thank you for helping keep the
+        knowledge base accurate.
+  - type: input
+    id: location
+    attributes:
+      label: File / question
+      description: Path and question number, e.g. `storage/s3.md` → Q4.
+      placeholder: "storage/s3.md → Q4"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is incorrect or could be improved?
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested correction
+    validations:
+      required: false
+  - type: input
+    id: source
+    attributes:
+      label: Reference (optional)
+      description: Link to AWS docs or another authoritative source.
+    validations:
+      required: false
