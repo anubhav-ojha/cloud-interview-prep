@@ -1,0 +1,4 @@
+# Template files contain intentional placeholders (empty links, empty cells)
+# and are excluded from linting.
+**/TEMPLATE.md
+node_modules/
